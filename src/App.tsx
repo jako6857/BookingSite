@@ -1,0 +1,468 @@
+import { useEffect, useState } from 'react'
+import type { FormEvent } from 'react'
+
+// ---------- Settings (change these) ----------
+const ADMIN_PASSWORD = 'bachelor2023' // NOTE: visible in the browser code, see README note
+const SLOTS = ['09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '12:00', '12:30', '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00']
+const DAYS_AHEAD = 60 // how far into the future people can book
+const CONTACT_EMAIL = 'kontakt@example.dk'
+
+// ---------- Storage (everything lives in this browser's localStorage) ----------
+type Booking = {
+  id: string
+  name: string
+  language: 'Dansk' | 'Engelsk'
+  email: string
+  phone: string
+  date: string // YYYY-MM-DD
+  time: string // HH:MM
+}
+
+const KEY = 'interview-bookings'
+
+function load(): Booking[] {
+  try {
+    return JSON.parse(localStorage.getItem(KEY) ?? '[]')
+  } catch {
+    return []
+  }
+}
+
+function save(bookings: Booking[]) {
+  localStorage.setItem(KEY, JSON.stringify(bookings))
+}
+
+// ---------- Date helpers ----------
+const MONTHS = ['Januar', 'Februar', 'Marts', 'April', 'Maj', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'December']
+const WEEKDAYS = ['MAN', 'TIR', 'ONS', 'TOR', 'FRE', 'LØR', 'SØN']
+const LONG_WEEKDAYS = ['Søndag', 'Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag', 'Lørdag']
+
+const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n)
+const prettyDate = (s: string) => {
+  const [y, m, d] = s.split('-').map(Number)
+  return `${LONG_WEEKDAYS[new Date(y, m - 1, d).getDay()]} d. ${d}. ${MONTHS[m - 1].toLowerCase()} ${y}`
+}
+
+const inputClass = 'w-full rounded border border-stone-400 bg-white px-3 py-2 outline-none focus:border-slate-700 focus:ring-2 focus:ring-slate-300'
+
+// ---------- App ----------
+export default function App() {
+  const [isAdmin, setIsAdmin] = useState(location.hash === '#admin')
+
+  useEffect(() => {
+    const onHash = () => setIsAdmin(location.hash === '#admin')
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
+
+  return (
+    <div className="min-h-screen">
+      <header className="border-b border-stone-400 bg-stone-100">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+          <a href="#" className="flex items-center">
+            <img src="/logo.png" alt="Bachelor – Katharina og Cecilie" className="h-12 w-auto sm:h-14" />
+          </a>
+          <nav className="flex gap-5 text-sm font-medium uppercase tracking-wide">
+            <a href="#om" className="hover:underline">Om projektet</a>
+            <a href="#kontakt" className="hover:underline">Kontakt</a>
+          </nav>
+        </div>
+      </header>
+
+      {isAdmin ? <Admin /> : <Booking />}
+
+      <footer id="kontakt" className="mt-12 border-t border-stone-400 bg-stone-100 py-8 text-center text-sm text-stone-600">
+        <p>Spørgsmål? Skriv til <a className="underline" href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a></p>
+        <p className="mt-2">
+          {isAdmin ? <a className="underline" href="#">Tilbage til booking</a> : <a className="underline" href="#admin">Admin</a>}
+        </p>
+      </footer>
+    </div>
+  )
+}
+
+// ---------- Booking view ----------
+function Booking() {
+  const [bookings, setBookings] = useState(load)
+  const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1))
+  const [date, setDate] = useState('')
+  const [time, setTime] = useState('')
+  const [name, setName] = useState('')
+  const [language, setLanguage] = useState<Booking['language']>('Dansk')
+  const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
+  const [error, setError] = useState('')
+  const [done, setDone] = useState<Booking | null>(null)
+
+  // keep in sync if bookings change in another tab
+  useEffect(() => {
+    const onStorage = () => setBookings(load())
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const minDate = addDays(today, 1)
+  const maxDate = addDays(today, DAYS_AHEAD)
+
+  const taken = new Set(bookings.map((b) => `${b.date} ${b.time}`))
+  const isFree = (d: string, t: string) => !taken.has(`${d} ${t}`)
+
+  const isOpen = (d: Date) => {
+    const weekday = d.getDay()
+    if (weekday === 0 || weekday === 6 || d < minDate || d > maxDate) return false
+    return SLOTS.some((t) => isFree(ymd(d), t))
+  }
+
+  const offset = (month.getDay() + 6) % 7 // Monday first
+  const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate()
+  const cells: (Date | null)[] = [
+    ...Array(offset).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => new Date(month.getFullYear(), month.getMonth(), i + 1)),
+  ]
+  const canGoBack = month > new Date(today.getFullYear(), today.getMonth(), 1)
+  const canGoForward = new Date(month.getFullYear(), month.getMonth() + 1, 1) <= maxDate
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    if (!date || !time) {
+      setError('Vælg både en dato og et tidspunkt.')
+      return
+    }
+    // re-check right before saving so two people can't get the same time
+    const fresh = load()
+    if (fresh.some((b) => b.date === date && b.time === time)) {
+      setBookings(fresh)
+      setTime('')
+      setError('Det valgte tidspunkt blev lige booket af en anden. Vælg venligst et andet.')
+      return
+    }
+    const booking: Booking = { id: crypto.randomUUID(), name: name.trim(), language, email: email.trim(), phone: phone.trim(), date, time }
+    save([...fresh, booking])
+    setBookings([...fresh, booking])
+    setDone(booking)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  const reset = () => {
+    setDone(null)
+    setDate('')
+    setTime('')
+    setName('')
+    setEmail('')
+    setPhone('')
+    setError('')
+  }
+
+  if (done) {
+    return (
+      <main className="mx-auto max-w-xl px-4 py-12">
+        <div className="rounded-lg border border-green-300 bg-green-50 p-6 text-center shadow-sm sm:p-10">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-green-600 text-3xl text-white">✓</div>
+          <h1 className="text-3xl font-bold">Din tid er booket!</h1>
+          <p className="mt-3 text-lg">
+            {prettyDate(done.date)} kl. <strong>{done.time}</strong>
+          </p>
+          <dl className="mx-auto mt-6 max-w-xs space-y-1 text-left text-sm">
+            <div className="flex justify-between"><dt className="text-stone-600">Navn</dt><dd>{done.name}</dd></div>
+            <div className="flex justify-between"><dt className="text-stone-600">Sprog</dt><dd>{done.language}</dd></div>
+            <div className="flex justify-between"><dt className="text-stone-600">E-mail</dt><dd>{done.email}</dd></div>
+            <div className="flex justify-between"><dt className="text-stone-600">Telefon</dt><dd>{done.phone}</dd></div>
+          </dl>
+          <p className="mt-6 text-sm text-stone-600">Tag gerne et screenshot af denne side som bekræftelse. Tusind tak fordi du vil deltage!</p>
+          <button onClick={reset} className="mt-6 text-sm underline">Book en tid til en anden</button>
+        </div>
+      </main>
+    )
+  }
+
+  return (
+    <main>
+      <section className="bg-stone-100">
+        <div className="mx-auto grid max-w-6xl items-center gap-6 px-4 py-10 md:grid-cols-2">
+          <div>
+            <h1 className="text-4xl font-bold sm:text-5xl">Book et interview</h1>
+            <p className="mt-4 text-lg text-stone-700">
+              Tak fordi du vil deltage i vores bachelorprojekt. Vælg et tidspunkt, der passer dig, og udfyld dine kontaktoplysninger.
+            </p>
+          </div>
+          <img src="/logo.png" alt="" className="mx-auto w-full max-w-sm md:ml-auto" />
+        </div>
+      </section>
+
+      <form onSubmit={submit} className="mx-auto mt-8 grid max-w-6xl gap-6 px-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+        {/* Contact details */}
+        <section className="rounded-lg border border-stone-300 bg-stone-100 p-5">
+          <h2 className="mb-4 text-lg font-bold uppercase tracking-wide">Dine oplysninger</h2>
+          <div className="space-y-4">
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium">Navn *</span>
+              <input required value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" className={inputClass} />
+            </label>
+
+            <fieldset>
+              <legend className="mb-1 text-sm font-medium">Foretrukket sprog *</legend>
+              <div className="flex gap-6">
+                {(['Dansk', 'Engelsk'] as const).map((l) => (
+                  <label key={l} className="flex items-center gap-2">
+                    <input type="radio" name="language" checked={language === l} onChange={() => setLanguage(l)} className="h-4 w-4 accent-slate-800" />
+                    {l}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium">E-mailadresse *</span>
+              <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" className={inputClass} />
+            </label>
+
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium">Telefonnummer *</span>
+              <input required type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="tel" className={inputClass} />
+            </label>
+          </div>
+        </section>
+
+        {/* Date + time */}
+        <section className="rounded-lg border border-stone-300 bg-stone-100 p-5">
+          <h2 className="mb-4 text-lg font-bold uppercase tracking-wide">1. Vælg en dato</h2>
+
+          <div className="mx-auto max-w-md">
+            <div className="mb-2 flex items-center justify-between">
+              <button type="button" disabled={!canGoBack} onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))} className="h-9 w-9 rounded border border-stone-400 bg-white disabled:opacity-30" aria-label="Forrige måned">‹</button>
+              <span className="font-semibold">{MONTHS[month.getMonth()]} {month.getFullYear()}</span>
+              <button type="button" disabled={!canGoForward} onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))} className="h-9 w-9 rounded border border-stone-400 bg-white disabled:opacity-30" aria-label="Næste måned">›</button>
+            </div>
+
+            <div className="grid grid-cols-7 gap-1 text-center text-sm">
+              {WEEKDAYS.map((w) => (
+                <div key={w} className="py-1 text-xs font-semibold text-stone-500">{w}</div>
+              ))}
+              {cells.map((d, i) => {
+                if (!d) return <div key={i} />
+                const open = isOpen(d)
+                const selected = ymd(d) === date
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    disabled={!open}
+                    onClick={() => {
+                      setDate(ymd(d))
+                      setTime('')
+                      setError('')
+                    }}
+                    className={
+                      'aspect-square rounded border text-sm ' +
+                      (selected
+                        ? 'border-slate-800 bg-slate-700 font-bold text-white'
+                        : open
+                          ? 'border-stone-400 bg-white hover:bg-stone-200'
+                          : 'border-transparent bg-stone-200 text-stone-400')
+                    }
+                  >
+                    {d.getDate()}
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-600">
+              <span className="flex items-center gap-1"><i className="h-3 w-3 rounded-sm border border-stone-400 bg-white" /> Tilgængelig</span>
+              <span className="flex items-center gap-1"><i className="h-3 w-3 rounded-sm bg-stone-200" /> Ikke tilgængelig</span>
+              <span className="flex items-center gap-1"><i className="h-3 w-3 rounded-sm bg-slate-700" /> Valgt</span>
+            </div>
+          </div>
+
+          <h2 className="mb-4 mt-8 text-lg font-bold uppercase tracking-wide">
+            2. Vælg et tidspunkt{date && <span className="block text-sm font-normal normal-case text-stone-600 sm:ml-2 sm:inline">– {prettyDate(date)}</span>}
+          </h2>
+
+          {!date ? (
+            <p className="text-sm text-stone-600">Vælg først en dato ovenfor.</p>
+          ) : (
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+              {SLOTS.map((t) => {
+                const free = isFree(date, t)
+                const selected = t === time
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    disabled={!free}
+                    onClick={() => {
+                      setTime(t)
+                      setError('')
+                    }}
+                    className={
+                      'rounded border px-2 py-2 text-sm ' +
+                      (selected
+                        ? 'border-slate-800 bg-slate-700 font-bold text-white'
+                        : free
+                          ? 'border-stone-400 bg-white hover:bg-stone-200'
+                          : 'cursor-not-allowed border-red-200 bg-red-50 text-red-400 line-through')
+                    }
+                    title={free ? '' : 'Optaget'}
+                  >
+                    {t}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-600">
+            <span className="flex items-center gap-1"><i className="h-3 w-3 rounded-sm border border-stone-400 bg-white" /> Ledigt</span>
+            <span className="flex items-center gap-1"><i className="h-3 w-3 rounded-sm border border-red-200 bg-red-50" /> Optaget</span>
+            <span className="flex items-center gap-1"><i className="h-3 w-3 rounded-sm bg-slate-700" /> Dit valg</span>
+          </div>
+
+          {error && <p role="alert" className="mt-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+
+          <button type="submit" className="mt-6 w-full rounded bg-slate-700 py-3 text-lg font-semibold uppercase tracking-wide text-white hover:bg-slate-800">
+            Book interview
+          </button>
+        </section>
+      </form>
+
+      <section id="om" className="mx-auto mt-12 max-w-3xl px-4 text-center">
+        <h2 className="text-2xl font-bold">Om projektet</h2>
+        <p className="mt-3 text-stone-700">
+          Vi er to studerende, der skriver bachelorprojekt, og vi vil rigtig gerne tale med dig. Interviewet tager ca. 30 minutter,
+          og dine oplysninger bruges kun til projektet.
+        </p>
+      </section>
+    </main>
+  )
+}
+
+// ---------- Admin view ----------
+function Admin() {
+  const [authed, setAuthed] = useState(sessionStorage.getItem('admin') === '1')
+  const [password, setPassword] = useState('')
+  const [wrong, setWrong] = useState(false)
+  const [bookings, setBookings] = useState(load)
+  const [search, setSearch] = useState('')
+
+  const login = (e: FormEvent) => {
+    e.preventDefault()
+    if (password === ADMIN_PASSWORD) {
+      sessionStorage.setItem('admin', '1')
+      setAuthed(true)
+    } else {
+      setWrong(true)
+    }
+  }
+
+  if (!authed) {
+    return (
+      <main className="mx-auto max-w-sm px-4 py-16">
+        <form onSubmit={login} className="rounded-lg border border-stone-300 bg-stone-100 p-6">
+          <h1 className="text-2xl font-bold">Admin login</h1>
+          <p className="mt-1 text-sm text-stone-600">Kun for projektgruppen.</p>
+          <input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setWrong(false) }} placeholder="Adgangskode" className={inputClass + ' mt-4'} autoFocus />
+          {wrong && <p className="mt-2 text-sm text-red-700">Forkert adgangskode.</p>}
+          <button type="submit" className="mt-4 w-full rounded bg-slate-700 py-2 font-semibold text-white hover:bg-slate-800">Log ind</button>
+        </form>
+      </main>
+    )
+  }
+
+  const sorted = [...bookings].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))
+  const q = search.toLowerCase()
+  const shown = sorted.filter((b) => [b.name, b.email, b.phone].some((v) => v.toLowerCase().includes(q)))
+
+  const remove = (b: Booking) => {
+    if (!confirm(`Slet bookingen for ${b.name}? Tiden bliver ledig igen.`)) return
+    const next = load().filter((x) => x.id !== b.id)
+    save(next)
+    setBookings(next)
+  }
+
+  const exportCsv = () => {
+    const rows = [['Navn', 'Sprog', 'E-mail', 'Telefon', 'Dato', 'Tidspunkt'], ...sorted.map((b) => [b.name, b.language, b.email, b.phone, b.date, b.time])]
+    const csv = rows.map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(';')).join('\n')
+    const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'bookinger.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  // group by date for the agenda
+  const byDate = sorted.reduce<Record<string, Booking[]>>((acc, b) => {
+    ;(acc[b.date] ||= []).push(b)
+    return acc
+  }, {})
+
+  return (
+    <main className="mx-auto max-w-6xl px-4 py-8">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-3xl font-bold">Bookinger ({bookings.length})</h1>
+        <div className="flex gap-2">
+          <button onClick={exportCsv} disabled={!bookings.length} className="rounded border border-stone-400 bg-white px-3 py-2 text-sm disabled:opacity-40">Download CSV</button>
+          <button onClick={() => { sessionStorage.removeItem('admin'); setAuthed(false); setPassword('') }} className="rounded border border-stone-400 bg-white px-3 py-2 text-sm">Log ud</button>
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+        <section className="rounded-lg border border-stone-300 bg-stone-100 p-4">
+          <h2 className="mb-3 text-lg font-bold">Kalender</h2>
+          {!sorted.length && <p className="text-sm text-stone-600">Ingen bookinger endnu.</p>}
+          <div className="space-y-4">
+            {Object.entries(byDate).map(([d, list]) => (
+              <div key={d}>
+                <h3 className="mb-1 text-sm font-semibold">{prettyDate(d)}</h3>
+                <ul className="space-y-1">
+                  {list.map((b) => (
+                    <li key={b.id} className="rounded border border-green-300 bg-green-100 px-2 py-1 text-sm">
+                      <strong>{b.time}</strong> – Interview – {b.name}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-stone-300 bg-stone-100 p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-lg font-bold">Deltagerliste</h2>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Søg deltager..." className={inputClass + ' max-w-56'} />
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[34rem] text-left text-sm">
+              <thead>
+                <tr className="border-b border-stone-400 text-xs uppercase text-stone-600">
+                  <th className="py-2 pr-2">Navn</th>
+                  <th className="pr-2">Sprog</th>
+                  <th className="pr-2">Kontakt</th>
+                  <th className="pr-2">Tid</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((b) => (
+                  <tr key={b.id} className="border-b border-stone-300 align-top">
+                    <td className="py-2 pr-2">{b.name}</td>
+                    <td className="pr-2">{b.language}</td>
+                    <td className="pr-2">{b.email}<br />{b.phone}</td>
+                    <td className="pr-2 whitespace-nowrap">{b.date.split('-').reverse().join('/')}<br />{b.time}</td>
+                    <td><button onClick={() => remove(b)} className="rounded border border-red-300 px-2 py-1 text-xs text-red-700 hover:bg-red-50">Slet</button></td>
+                  </tr>
+                ))}
+                {!shown.length && (
+                  <tr><td colSpan={5} className="py-4 text-center text-stone-600">Ingen resultater.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </main>
+  )
+}
