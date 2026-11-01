@@ -21,7 +21,7 @@ const SLOTS = [
   "16:00",
 ];
 const DAYS_AHEAD = 60; // how far into the future people can book
-const CONTACT_EMAIL = "kontakt@example.dk";
+const CONTACT_EMAIL = "10500959@ucn.dk";
 
 // ---------- Database (Supabase) ----------
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
