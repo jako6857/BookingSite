@@ -1,5 +1,3 @@
-<<<<<<< HEAD
+# BookingSite
 
-# React + TypeScript + Vite
-
-> > > > > > > origin/main
+Simpel booking side lavet til Cille
