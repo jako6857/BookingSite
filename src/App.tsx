@@ -34,10 +34,12 @@ const supabase = createClient(
   supabaseKey || "placeholder",
 );
 
+type Language = "Dansk" | "Engelsk";
+
 type Booking = {
   id: string;
   name: string;
-  language: "Dansk" | "Engelsk";
+  language: Language;
   email: string;
   phone: string;
   date: string; // YYYY-MM-DD
@@ -69,13 +71,39 @@ const LONG_WEEKDAYS = [
   "Fredag",
   "Lørdag",
 ];
+const ENGLISH_MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+const ENGLISH_WEEKDAYS = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
 
 const ymd = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const addDays = (d: Date, n: number) =>
   new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
-const prettyDate = (s: string) => {
+const prettyDate = (s: string, language: Language = "Dansk") => {
   const [y, m, d] = s.split("-").map(Number);
+  if (language === "Engelsk") {
+    return `${ENGLISH_WEEKDAYS[new Date(y, m - 1, d).getDay()]}, ${d} ${ENGLISH_MONTHS[m - 1]} ${y}`;
+  }
   return `${LONG_WEEKDAYS[new Date(y, m - 1, d).getDay()]} d. ${d}. ${MONTHS[m - 1].toLowerCase()} ${y}`;
 };
 
@@ -93,6 +121,7 @@ function isValidPhoneNumber(value: string) {
 // ---------- App ----------
 export default function App() {
   const [isAdmin, setIsAdmin] = useState(location.hash === "#admin");
+  const [language, setLanguage] = useState<Language>("Dansk");
 
   useEffect(() => {
     const onHash = () => setIsAdmin(location.hash === "#admin");
@@ -113,10 +142,10 @@ export default function App() {
           </a>
           <nav className="flex gap-5 text-sm font-medium uppercase tracking-wide">
             <a href="#om" className="hover:underline">
-              Om projektet
+              {language === "Engelsk" ? "About the project" : "Om projektet"}
             </a>
             <a href="#kontakt" className="hover:underline">
-              Kontakt
+              {language === "Engelsk" ? "Contact" : "Kontakt"}
             </a>
           </nav>
         </div>
@@ -135,7 +164,7 @@ export default function App() {
       ) : isAdmin ? (
         <Admin />
       ) : (
-        <Booking />
+        <Booking language={language} setLanguage={setLanguage} />
       )}
 
       <footer
@@ -143,7 +172,7 @@ export default function App() {
         className="mt-12 border-t border-stone-400 bg-stone-100 py-8 text-center text-sm text-stone-600"
       >
         <p>
-          Spørgsmål? Skriv til{" "}
+          {language === "Engelsk" ? "Questions? Write to " : "Spørgsmål? Skriv til "}
           <a className="underline" href={`mailto:${CONTACT_EMAIL}`}>
             {CONTACT_EMAIL}
           </a>
@@ -151,7 +180,7 @@ export default function App() {
         <p className="mt-2">
           {isAdmin ? (
             <a className="underline" href="#">
-              Tilbage til booking
+              {language === "Engelsk" ? "Back to booking" : "Tilbage til booking"}
             </a>
           ) : (
             <a className="underline" href="#admin">
@@ -165,7 +194,13 @@ export default function App() {
 }
 
 // ---------- Booking view ----------
-function Booking() {
+function Booking({
+  language,
+  setLanguage,
+}: {
+  language: Language;
+  setLanguage: (language: Language) => void;
+}) {
   const [taken, setTaken] = useState(new Set<string>());
   const [sending, setSending] = useState(false);
   const [month, setMonth] = useState(
@@ -174,7 +209,6 @@ function Booking() {
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
   const [name, setName] = useState("");
-  const [language, setLanguage] = useState<Booking["language"]>("Dansk");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [error, setError] = useState("");
@@ -231,12 +265,18 @@ function Booking() {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!date || !time) {
-      setError("Vælg både en dato og et tidspunkt.");
+      setError(
+        language === "Engelsk"
+          ? "Please select both a date and a time."
+          : "Vælg både en dato og et tidspunkt.",
+      );
       return;
     }
     if (!isValidPhoneNumber(phone)) {
       setError(
-        "Indtast et gyldigt telefonnummer med 7-15 cifre. Internationale numre kan skrives med + og landekode.",
+        language === "Engelsk"
+          ? "Enter a valid phone number with 7-15 digits. International numbers may include + and a country code."
+          : "Indtast et gyldigt telefonnummer med 7-15 cifre. Internationale numre kan skrives med + og landekode.",
       );
       return;
     }
@@ -258,10 +298,16 @@ function Booking() {
         await refreshTaken();
         setTime("");
         setError(
-          "Det valgte tidspunkt blev lige booket af en anden. Vælg venligst et andet.",
+          language === "Engelsk"
+            ? "That time was just booked by someone else. Please choose another."
+            : "Det valgte tidspunkt blev lige booket af en anden. Vælg venligst et andet.",
         );
       } else {
-        setError("Noget gik galt. Prøv igen om lidt.");
+        setError(
+          language === "Engelsk"
+            ? "Something went wrong. Please try again shortly."
+            : "Noget gik galt. Prøv igen om lidt.",
+        );
       }
       return;
     }
@@ -288,17 +334,24 @@ function Booking() {
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-green-600 text-3xl text-white">
             ✓
           </div>
-          <h1 className="text-3xl font-bold">Din tid er booket!</h1>
+          <h1 className="text-3xl font-bold">
+            {language === "Engelsk" ? "Your time is booked!" : "Din tid er booket!"}
+          </h1>
           <p className="mt-3 text-lg">
-            {prettyDate(done.date)} kl. <strong>{done.time}</strong>
+            {prettyDate(done.date, language)}{" "}
+            {language === "Engelsk" ? "at" : "kl."} <strong>{done.time}</strong>
           </p>
           <dl className="mx-auto mt-6 max-w-xs space-y-1 text-left text-sm">
             <div className="flex justify-between">
-              <dt className="text-stone-600">Navn</dt>
+              <dt className="text-stone-600">
+                {language === "Engelsk" ? "Name" : "Navn"}
+              </dt>
               <dd>{done.name}</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-stone-600">Sprog</dt>
+              <dt className="text-stone-600">
+                {language === "Engelsk" ? "Language" : "Sprog"}
+              </dt>
               <dd>{done.language}</dd>
             </div>
             <div className="flex justify-between">
@@ -306,16 +359,19 @@ function Booking() {
               <dd>{done.email}</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-stone-600">Telefon</dt>
+              <dt className="text-stone-600">
+                {language === "Engelsk" ? "Phone" : "Telefon"}
+              </dt>
               <dd>{done.phone}</dd>
             </div>
           </dl>
           <p className="mt-6 text-sm text-stone-600">
-            Tag gerne et screenshot af denne side som bekræftelse. Tusind tak
-            fordi du vil deltage!
+            {language === "Engelsk"
+              ? "Feel free to take a screenshot of this page as confirmation. Thank you for participating!"
+              : "Tag gerne et screenshot af denne side som bekræftelse. Tusind tak fordi du vil deltage!"}
           </p>
           <button onClick={reset} className="mt-6 text-sm underline">
-            Book en tid til en anden
+            {language === "Engelsk" ? "Book a time for someone else" : "Book en tid til en anden"}
           </button>
         </div>
       </main>
@@ -328,11 +384,12 @@ function Booking() {
         <div className="mx-auto grid max-w-6xl items-center gap-6 px-4 py-10 md:grid-cols-2">
           <div>
             <h1 className="text-4xl font-bold sm:text-5xl">
-              Book et interview
+              {language === "Engelsk" ? "Book an interview" : "Book et interview"}
             </h1>
             <p className="mt-4 text-lg text-stone-700">
-              Tak fordi du vil deltage i vores bachelorprojekt. Vælg et
-              tidspunkt, der passer dig, og udfyld dine kontaktoplysninger.
+              {language === "Engelsk"
+                ? "Thank you for participating in our bachelor project. Choose a time that suits you and fill in your contact details."
+                : "Tak fordi du vil deltage i vores bachelorprojekt. Vælg et tidspunkt, der passer dig, og udfyld dine kontaktoplysninger."}
             </p>
           </div>
           <img
@@ -350,11 +407,13 @@ function Booking() {
         {/* Contact details */}
         <section className="rounded-lg border border-stone-300 bg-stone-100 p-5">
           <h2 className="mb-4 text-lg font-bold uppercase tracking-wide">
-            Dine oplysninger
+            {language === "Engelsk" ? "Your details" : "Dine oplysninger"}
           </h2>
           <div className="space-y-4">
             <label className="block">
-              <span className="mb-1 block text-sm font-medium">Navn *</span>
+              <span className="mb-1 block text-sm font-medium">
+                {language === "Engelsk" ? "Name" : "Navn"} *
+              </span>
               <input
                 required
                 value={name}
@@ -366,7 +425,7 @@ function Booking() {
 
             <fieldset>
               <legend className="mb-1 text-sm font-medium">
-                Foretrukket sprog *
+                {language === "Engelsk" ? "Preferred language" : "Foretrukket sprog"} *
               </legend>
               <div className="flex gap-6">
                 {(["Dansk", "Engelsk"] as const).map((l) => (
@@ -378,7 +437,11 @@ function Booking() {
                       onChange={() => setLanguage(l)}
                       className="h-4 w-4 accent-slate-800"
                     />
-                    {l}
+                    {language === "Engelsk"
+                      ? l === "Dansk"
+                        ? "Danish"
+                        : "English"
+                      : l}
                   </label>
                 ))}
               </div>
@@ -386,7 +449,7 @@ function Booking() {
 
             <label className="block">
               <span className="mb-1 block text-sm font-medium">
-                E-mailadresse *
+                {language === "Engelsk" ? "Email address" : "E-mailadresse"} *
               </span>
               <input
                 required
@@ -400,7 +463,7 @@ function Booking() {
 
             <label className="block">
               <span className="mb-1 block text-sm font-medium">
-                Telefonnummer *
+                {language === "Engelsk" ? "Phone number" : "Telefonnummer"} *
               </span>
               <input
                 required
@@ -411,7 +474,11 @@ function Booking() {
                 autoComplete="tel"
                 placeholder="+45 12 34 56 78"
                 pattern="[+0-9 () .-]+"
-                title="Brug 7-15 cifre. Internationale numre kan skrives med + og landekode."
+                title={
+                  language === "Engelsk"
+                    ? "Use 7-15 digits. International numbers may include + and a country code."
+                    : "Brug 7-15 cifre. Internationale numre kan skrives med + og landekode."
+                }
                 className={inputClass}
               />
             </label>
@@ -421,7 +488,7 @@ function Booking() {
         {/* Date + time */}
         <section className="rounded-lg border border-stone-300 bg-stone-100 p-5">
           <h2 className="mb-4 text-lg font-bold uppercase tracking-wide">
-            1. Vælg en dato
+            {language === "Engelsk" ? "1. Choose a date" : "1. Vælg en dato"}
           </h2>
 
           <div className="mx-auto max-w-md">
@@ -435,12 +502,13 @@ function Booking() {
                   )
                 }
                 className="h-9 w-9 rounded border border-stone-400 bg-white disabled:opacity-30"
-                aria-label="Forrige måned"
+                aria-label={language === "Engelsk" ? "Previous month" : "Forrige måned"}
               >
                 ‹
               </button>
               <span className="font-semibold">
-                {MONTHS[month.getMonth()]} {month.getFullYear()}
+                {(language === "Engelsk" ? ENGLISH_MONTHS : MONTHS)[month.getMonth()]}{" "}
+                {month.getFullYear()}
               </span>
               <button
                 type="button"
@@ -451,14 +519,17 @@ function Booking() {
                   )
                 }
                 className="h-9 w-9 rounded border border-stone-400 bg-white disabled:opacity-30"
-                aria-label="Næste måned"
+                aria-label={language === "Engelsk" ? "Next month" : "Næste måned"}
               >
                 ›
               </button>
             </div>
 
             <div className="grid grid-cols-7 gap-1 text-center text-sm">
-              {WEEKDAYS.map((w) => (
+              {(language === "Engelsk"
+                ? ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
+                : WEEKDAYS
+              ).map((w) => (
                 <div
                   key={w}
                   className="py-1 text-xs font-semibold text-stone-500"
@@ -498,30 +569,35 @@ function Booking() {
             <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-600">
               <span className="flex items-center gap-1">
                 <i className="h-3 w-3 rounded-sm border border-stone-400 bg-white" />{" "}
-                Tilgængelig
+                {language === "Engelsk" ? "Available" : "Tilgængelig"}
               </span>
               <span className="flex items-center gap-1">
-                <i className="h-3 w-3 rounded-sm bg-stone-200" /> Ikke
-                tilgængelig
+                <i className="h-3 w-3 rounded-sm bg-stone-200" />{" "}
+                {language === "Engelsk" ? "Unavailable" : "Ikke tilgængelig"}
               </span>
               <span className="flex items-center gap-1">
-                <i className="h-3 w-3 rounded-sm bg-slate-700" /> Valgt
+                <i className="h-3 w-3 rounded-sm bg-slate-700" />{" "}
+                {language === "Engelsk" ? "Selected" : "Valgt"}
               </span>
             </div>
           </div>
 
           <h2 className="mb-4 mt-8 text-lg font-bold uppercase tracking-wide">
-            2. Vælg et tidspunkt
+            {language === "Engelsk"
+              ? "2. Choose a time"
+              : "2. Vælg et tidspunkt"}
             {date && (
               <span className="block text-sm font-normal normal-case text-stone-600 sm:ml-2 sm:inline">
-                – {prettyDate(date)}
+                – {prettyDate(date, language)}
               </span>
             )}
           </h2>
 
           {!date ? (
             <p className="text-sm text-stone-600">
-              Vælg først en dato ovenfor.
+              {language === "Engelsk"
+                ? "Please choose a date above first."
+                : "Vælg først en dato ovenfor."}
             </p>
           ) : (
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
@@ -545,7 +621,9 @@ function Booking() {
                           ? "border-stone-400 bg-white hover:bg-stone-200"
                           : "cursor-not-allowed border-red-200 bg-red-50 text-red-400 line-through")
                     }
-                    title={free ? "" : "Optaget"}
+                    title={
+                      free ? "" : language === "Engelsk" ? "Booked" : "Optaget"
+                    }
                   >
                     {t}
                   </button>
@@ -557,14 +635,15 @@ function Booking() {
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-600">
             <span className="flex items-center gap-1">
               <i className="h-3 w-3 rounded-sm border border-stone-400 bg-white" />{" "}
-              Ledigt
+              {language === "Engelsk" ? "Available" : "Ledigt"}
             </span>
             <span className="flex items-center gap-1">
               <i className="h-3 w-3 rounded-sm border border-red-200 bg-red-50" />{" "}
-              Optaget
+              {language === "Engelsk" ? "Booked" : "Optaget"}
             </span>
             <span className="flex items-center gap-1">
-              <i className="h-3 w-3 rounded-sm bg-slate-700" /> Dit valg
+              <i className="h-3 w-3 rounded-sm bg-slate-700" />{" "}
+              {language === "Engelsk" ? "Your choice" : "Dit valg"}
             </span>
           </div>
 
@@ -582,17 +661,25 @@ function Booking() {
             disabled={sending}
             className="mt-6 w-full rounded bg-slate-700 py-3 text-lg font-semibold uppercase tracking-wide text-white hover:bg-slate-800 disabled:opacity-60"
           >
-            {sending ? "Booker..." : "Book interview"}
+            {sending
+              ? language === "Engelsk"
+                ? "Booking..."
+                : "Booker..."
+              : language === "Engelsk"
+                ? "Book interview"
+                : "Book interview"}
           </button>
         </section>
       </form>
 
       <section id="om" className="mx-auto mt-12 max-w-3xl px-4 text-center">
-        <h2 className="text-2xl font-bold">Om projektet</h2>
+        <h2 className="text-2xl font-bold">
+          {language === "Engelsk" ? "About the project" : "Om projektet"}
+        </h2>
         <p className="mt-3 text-stone-700">
-          Vi er to studerende, der skriver bachelorprojekt, og vi vil rigtig
-          gerne tale med dig. Interviewet tager ca. 30 minutter, og dine
-          oplysninger bruges kun til projektet.
+          {language === "Engelsk"
+            ? "We are two students writing a bachelor project, and we would love to talk to you. The interview takes approximately 30 minutes, and your information will only be used for the project."
+            : "Vi er to studerende, der skriver bachelorprojekt, og vi vil rigtig gerne tale med dig. Interviewet tager ca. 30 minutter, og dine oplysninger bruges kun til projektet."}
         </p>
       </section>
     </main>
