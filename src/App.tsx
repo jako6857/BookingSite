@@ -207,9 +207,7 @@ function Booking() {
   const isFree = (d: string, t: string) => !taken.has(`${d} ${t}`);
 
   const isOpen = (d: Date) => {
-    const weekday = d.getDay();
-    if (weekday === 0 || weekday === 6 || d < minDate || d > maxDate)
-      return false;
+    if (d < minDate || d > maxDate) return false;
     return SLOTS.some((t) => isFree(ymd(d), t));
   };
 
