@@ -46,6 +46,10 @@ type Booking = {
   time: string; // HH:MM
 };
 
+type BlockedDate = {
+  date: string; // YYYY-MM-DD
+};
+
 // ---------- Date helpers ----------
 const MONTHS = [
   "Januar",
@@ -202,6 +206,7 @@ function Booking({
   setLanguage: (language: Language) => void;
 }) {
   const [taken, setTaken] = useState(new Set<string>());
+  const [blockedDates, setBlockedDates] = useState(new Set<string>());
   const [sending, setSending] = useState(false);
   const [month, setMonth] = useState(
     () => new Date(new Date().getFullYear(), new Date().getMonth(), 1),
@@ -226,11 +231,29 @@ function Booking({
       );
   };
 
-  // load the taken times now, and again every 30 seconds
+  const refreshBlockedDates = async () => {
+    const { data, error } = await supabase
+      .from("blocked_dates")
+      .select("date");
+    if (error) {
+      console.error("Could not load blocked dates.", error);
+      return;
+    }
+    setBlockedDates(
+      new Set((data as BlockedDate[]).map((blockedDate) => blockedDate.date)),
+    );
+  };
+
+  // load availability now, and again every 30 seconds
   useEffect(() => {
     refreshTaken();
+    refreshBlockedDates();
     const timer = setInterval(refreshTaken, 30000);
-    return () => clearInterval(timer);
+    const blockedDatesTimer = setInterval(refreshBlockedDates, 30000);
+    return () => {
+      clearInterval(timer);
+      clearInterval(blockedDatesTimer);
+    };
   }, []);
 
   const today = new Date();
@@ -242,6 +265,7 @@ function Booking({
 
   const isOpen = (d: Date) => {
     if (d < minDate || d > maxDate) return false;
+    if (blockedDates.has(ymd(d))) return false;
     return SLOTS.some((t) => isFree(ymd(d), t));
   };
 
@@ -270,6 +294,17 @@ function Booking({
           ? "Please select both a date and a time."
           : "Vælg både en dato og et tidspunkt.",
       );
+      return;
+    }
+    if (blockedDates.has(date)) {
+      setDate("");
+      setTime("");
+      setError(
+        language === "Engelsk"
+          ? "That date is no longer available. Please choose another date."
+          : "Datoen er ikke længere tilgængelig. Vælg venligst en anden dato.",
+      );
+      await refreshBlockedDates();
       return;
     }
     if (!isValidPhoneNumber(phone)) {
@@ -693,6 +728,12 @@ function Admin() {
   const [password, setPassword] = useState("");
   const [wrong, setWrong] = useState(false);
   const [bookings, setBookings] = useState<Booking[]>([]);
+  const [blockedDates, setBlockedDates] = useState(new Set<string>());
+  const [blockedMonth, setBlockedMonth] = useState(
+    () => new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+  );
+  const [dateToChange, setDateToChange] = useState<string | null>(null);
+  const [changingDate, setChangingDate] = useState(false);
   const [search, setSearch] = useState("");
 
   const loadBookings = async () => {
@@ -704,6 +745,20 @@ function Admin() {
     setBookings((data as Booking[]) ?? []);
   };
 
+  const loadBlockedDates = async () => {
+    const { data, error } = await supabase
+      .from("blocked_dates")
+      .select("date")
+      .order("date");
+    if (error) {
+      console.error("Could not load blocked dates.", error);
+      return;
+    }
+    setBlockedDates(
+      new Set((data as BlockedDate[]).map((blockedDate) => blockedDate.date)),
+    );
+  };
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setLoggedIn(!!data.session));
     const { data } = supabase.auth.onAuthStateChange((_event, session) =>
@@ -713,7 +768,10 @@ function Admin() {
   }, []);
 
   useEffect(() => {
-    if (loggedIn) loadBookings();
+    if (loggedIn) {
+      loadBookings();
+      loadBlockedDates();
+    }
   }, [loggedIn]);
 
   const login = async (e: FormEvent) => {
@@ -805,6 +863,39 @@ function Admin() {
     else setBookings(bookings.filter((x) => x.id !== b.id));
   };
 
+  const toggleBlockedDate = async (date: string) => {
+    setChangingDate(true);
+    if (blockedDates.has(date)) {
+      const { error } = await supabase
+        .from("blocked_dates")
+        .delete()
+        .eq("date", date);
+      if (error) {
+        setChangingDate(false);
+        alert("Kunne ikke åbne datoen igen.");
+        return;
+      }
+      setBlockedDates((current) => {
+        const next = new Set(current);
+        next.delete(date);
+        return next;
+      });
+      setChangingDate(false);
+      setDateToChange(null);
+      return;
+    }
+
+    const { error } = await supabase.from("blocked_dates").insert({ date });
+    if (error) {
+      setChangingDate(false);
+      alert("Kunne ikke lukke datoen.");
+      return;
+    }
+    setBlockedDates((current) => new Set(current).add(date));
+    setChangingDate(false);
+    setDateToChange(null);
+  };
+
   const exportCsv = () => {
     const rows = [
       ["Navn", "Sprog", "E-mail", "Telefon", "Dato", "Tidspunkt"],
@@ -836,6 +927,29 @@ function Admin() {
     return acc;
   }, {});
 
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const minDate = addDays(today, 1);
+  const maxDate = addDays(today, DAYS_AHEAD);
+  const blockedMonthOffset = (blockedMonth.getDay() + 6) % 7;
+  const blockedDaysInMonth = new Date(
+    blockedMonth.getFullYear(),
+    blockedMonth.getMonth() + 1,
+    0,
+  ).getDate();
+  const blockedCells: (Date | null)[] = [
+    ...Array(blockedMonthOffset).fill(null),
+    ...Array.from(
+      { length: blockedDaysInMonth },
+      (_, i) =>
+        new Date(blockedMonth.getFullYear(), blockedMonth.getMonth(), i + 1),
+    ),
+  ];
+  const canGoBack = blockedMonth > new Date(today.getFullYear(), today.getMonth(), 1);
+  const canGoForward =
+    new Date(blockedMonth.getFullYear(), blockedMonth.getMonth() + 1, 1) <=
+    maxDate;
+
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -865,7 +979,91 @@ function Admin() {
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
         <section className="rounded-lg border border-stone-300 bg-stone-100 p-4">
-          <h2 className="mb-3 text-lg font-bold">Kalender</h2>
+          <h2 className="mb-1 text-lg font-bold">Luk datoer</h2>
+          <p className="mb-3 text-sm text-stone-600">
+            Klik på en dato for at gøre den utilgængelig for nye bookinger.
+          </p>
+          <div className="mx-auto max-w-md">
+            <div className="mb-2 flex items-center justify-between">
+              <button
+                type="button"
+                disabled={!canGoBack}
+                onClick={() =>
+                  setBlockedMonth(
+                    new Date(
+                      blockedMonth.getFullYear(),
+                      blockedMonth.getMonth() - 1,
+                      1,
+                    ),
+                  )
+                }
+                className="h-9 w-9 rounded border border-stone-400 bg-white disabled:opacity-30"
+                aria-label="Forrige måned"
+              >
+                ‹
+              </button>
+              <span className="font-semibold">
+                {MONTHS[blockedMonth.getMonth()]} {blockedMonth.getFullYear()}
+              </span>
+              <button
+                type="button"
+                disabled={!canGoForward}
+                onClick={() =>
+                  setBlockedMonth(
+                    new Date(
+                      blockedMonth.getFullYear(),
+                      blockedMonth.getMonth() + 1,
+                      1,
+                    ),
+                  )
+                }
+                className="h-9 w-9 rounded border border-stone-400 bg-white disabled:opacity-30"
+                aria-label="Næste måned"
+              >
+                ›
+              </button>
+            </div>
+            <div className="grid grid-cols-7 gap-1 text-center text-sm">
+              {WEEKDAYS.map((weekday) => (
+                <div
+                  key={weekday}
+                  className="py-1 text-xs font-semibold text-stone-500"
+                >
+                  {weekday}
+                </div>
+              ))}
+              {blockedCells.map((d, i) => {
+                if (!d) return <div key={i} />;
+                const date = ymd(d);
+                const inRange = d >= minDate && d <= maxDate;
+                const blocked = blockedDates.has(date);
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    disabled={!inRange}
+                    onClick={() => setDateToChange(date)}
+                    className={
+                      "aspect-square rounded border text-sm " +
+                      (blocked
+                        ? "border-red-400 bg-red-200 font-bold text-red-900 hover:bg-red-300"
+                        : inRange
+                          ? "border-stone-400 bg-white hover:bg-stone-200"
+                          : "border-transparent bg-stone-200 text-stone-400")
+                    }
+                    title={blocked ? "Åbn dato" : "Luk dato"}
+                  >
+                    {d.getDate()}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-xs text-stone-600">
+              Røde datoer er lukket. Datoer kan kun ændres inden for
+              bookingperioden.
+            </p>
+          </div>
+          <h2 className="mb-3 mt-6 text-lg font-bold">Bookinger pr. dato</h2>
           {!bookings.length && (
             <p className="text-sm text-stone-600">Ingen bookinger endnu.</p>
           )}
@@ -949,6 +1147,65 @@ function Admin() {
           </div>
         </section>
       </div>
+      {dateToChange && (
+        <div
+          className="fixed inset-0 z-10 flex items-center justify-center bg-black/40 px-4"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !changingDate) {
+              setDateToChange(null);
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="date-change-title"
+            className="w-full max-w-md rounded-lg border border-stone-300 bg-white p-6 shadow-xl"
+          >
+            <h2 id="date-change-title" className="text-xl font-bold">
+              {blockedDates.has(dateToChange)
+                ? "Gør datoen tilgængelig igen?"
+                : "Gør datoen utilgængelig?"}
+            </h2>
+            <p className="mt-3 text-stone-700">
+              {prettyDate(dateToChange)}
+              {blockedDates.has(dateToChange)
+                ? " kan igen vælges af besøgende."
+                : " kan ikke længere vælges af besøgende."}
+            </p>
+            {!blockedDates.has(dateToChange) &&
+              (byDate[dateToChange]?.length ?? 0) > 0 && (
+                <p className="mt-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                  Der er allerede {byDate[dateToChange].length} booking(er) på
+                  denne dato. De bliver ikke slettet.
+                </p>
+              )}
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={changingDate}
+                onClick={() => setDateToChange(null)}
+                className="rounded border border-stone-400 px-4 py-2 text-sm disabled:opacity-50"
+              >
+                Annuller
+              </button>
+              <button
+                type="button"
+                disabled={changingDate}
+                onClick={() => toggleBlockedDate(dateToChange)}
+                className="rounded bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+              >
+                {changingDate
+                  ? "Gemmer..."
+                  : blockedDates.has(dateToChange)
+                    ? "Gør tilgængelig"
+                    : "Gør utilgængelig"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
