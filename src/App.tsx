@@ -343,6 +343,14 @@ function Booking({
             ? "That time was just booked by someone else. Please choose another."
             : "Det valgte tidspunkt blev lige booket af en anden. Vælg venligst et andet.",
         );
+      } else if (dbError.message.includes("booking time is unavailable")) {
+        await refreshBlockedSlots();
+        setTime("");
+        setError(
+            language === "Engelsk"
+              ? "That time is no longer available. Please choose another."
+              : "Det valgte tidspunkt er ikke længere tilgængeligt. Vælg venligst et andet.",
+        );
       } else {
         setError(
           language === "Engelsk"
@@ -750,6 +758,7 @@ function Admin() {
   const [dateToChange, setDateToChange] = useState<string | null>(null);
   const [selectedModalTimes, setSelectedModalTimes] = useState<string[]>([]);
   const [changingDate, setChangingDate] = useState(false);
+  const [blockedSlotsError, setBlockedSlotsError] = useState("");
   const [search, setSearch] = useState("");
 
   const loadBookings = async () => {
@@ -769,8 +778,12 @@ function Admin() {
       .order("time");
     if (error) {
       console.error("Could not load blocked time slots.", error);
+      setBlockedSlotsError(
+        `Kunne ikke hente lukkede tider: ${error.message}`,
+      );
       return;
     }
+    setBlockedSlotsError("");
     setBlockedSlots(
       new Set(
         (data as BlockedSlot[]).map(
@@ -886,26 +899,25 @@ function Admin() {
 
   const saveBlockedSlots = async (date: string, selectedTimes: string[]) => {
     setChangingDate(true);
-    const { error: deleteError } = await supabase
-      .from("blocked_slots")
-      .delete()
-      .eq("date", date);
-    if (deleteError) {
+    const invalidTime = selectedTimes.find((time) => !SLOTS.includes(time));
+    if (invalidTime) {
       setChangingDate(false);
-      alert("Kunne ikke opdatere klokkeslættene.");
+      setBlockedSlotsError(`Ugyldigt klokkeslæt: ${invalidTime}`);
       return;
     }
 
-    if (selectedTimes.length) {
-      const { error: insertError } = await supabase
-        .from("blocked_slots")
-        .insert(selectedTimes.map((time) => ({ date, time })));
-      if (insertError) {
-        setChangingDate(false);
-        alert("Kunne ikke opdatere klokkeslættene.");
-        await loadBlockedSlots();
-        return;
-      }
+    const { error } = await supabase.rpc("set_blocked_slots", {
+      target_date: date,
+      target_times: selectedTimes,
+    });
+    if (error) {
+      console.error("Could not update blocked time slots.", error);
+      setChangingDate(false);
+      setBlockedSlotsError(
+        `Kunne ikke opdatere klokkeslættene: ${error.message}`,
+      );
+      await loadBlockedSlots();
+      return;
     }
 
     setBlockedSlots((current) => {
@@ -917,6 +929,8 @@ function Admin() {
     });
     setChangingDate(false);
     setDateToChange(null);
+    setSelectedModalTimes([]);
+    setBlockedSlotsError("");
   };
 
   const openDateModal = (date: string) => {
@@ -1032,6 +1046,14 @@ function Admin() {
           <p className="mb-3 text-sm text-stone-600">
             Klik på en dato for at gøre den utilgængelig for nye bookinger.
           </p>
+          {blockedSlotsError && (
+            <p
+              role="alert"
+              className="mb-3 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700"
+            >
+              {blockedSlotsError}
+            </p>
+          )}
           <div className="mx-auto max-w-md">
             <div className="mb-2 flex items-center justify-between">
               <button
