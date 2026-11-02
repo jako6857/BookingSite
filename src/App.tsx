@@ -46,8 +46,9 @@ type Booking = {
   time: string; // HH:MM
 };
 
-type BlockedDate = {
+type BlockedSlot = {
   date: string; // YYYY-MM-DD
+  time: string; // HH:MM
 };
 
 // ---------- Date helpers ----------
@@ -206,7 +207,7 @@ function Booking({
   setLanguage: (language: Language) => void;
 }) {
   const [taken, setTaken] = useState(new Set<string>());
-  const [blockedDates, setBlockedDates] = useState(new Set<string>());
+  const [blockedSlots, setBlockedSlots] = useState(new Set<string>());
   const [sending, setSending] = useState(false);
   const [month, setMonth] = useState(
     () => new Date(new Date().getFullYear(), new Date().getMonth(), 1),
@@ -231,28 +232,32 @@ function Booking({
       );
   };
 
-  const refreshBlockedDates = async () => {
+  const refreshBlockedSlots = async () => {
     const { data, error } = await supabase
-      .from("blocked_dates")
-      .select("date");
+      .from("blocked_slots")
+      .select("date, time");
     if (error) {
-      console.error("Could not load blocked dates.", error);
+      console.error("Could not load blocked time slots.", error);
       return;
     }
-    setBlockedDates(
-      new Set((data as BlockedDate[]).map((blockedDate) => blockedDate.date)),
+    setBlockedSlots(
+      new Set(
+        (data as BlockedSlot[]).map(
+          (blockedSlot) => `${blockedSlot.date} ${blockedSlot.time}`,
+        ),
+      ),
     );
   };
 
   // load availability now, and again every 30 seconds
   useEffect(() => {
     refreshTaken();
-    refreshBlockedDates();
+    refreshBlockedSlots();
     const timer = setInterval(refreshTaken, 30000);
-    const blockedDatesTimer = setInterval(refreshBlockedDates, 30000);
+    const blockedSlotsTimer = setInterval(refreshBlockedSlots, 30000);
     return () => {
       clearInterval(timer);
-      clearInterval(blockedDatesTimer);
+      clearInterval(blockedSlotsTimer);
     };
   }, []);
 
@@ -265,8 +270,9 @@ function Booking({
 
   const isOpen = (d: Date) => {
     if (d < minDate || d > maxDate) return false;
-    if (blockedDates.has(ymd(d))) return false;
-    return SLOTS.some((t) => isFree(ymd(d), t));
+    return SLOTS.some(
+      (t) => isFree(ymd(d), t) && !blockedSlots.has(`${ymd(d)} ${t}`),
+    );
   };
 
   const offset = (month.getDay() + 6) % 7; // Monday first
@@ -296,7 +302,7 @@ function Booking({
       );
       return;
     }
-    if (blockedDates.has(date)) {
+    if (blockedSlots.has(`${date} ${time}`)) {
       setDate("");
       setTime("");
       setError(
@@ -304,7 +310,7 @@ function Booking({
           ? "That date is no longer available. Please choose another date."
           : "Datoen er ikke længere tilgængelig. Vælg venligst en anden dato.",
       );
-      await refreshBlockedDates();
+      await refreshBlockedSlots();
       return;
     }
     if (!isValidPhoneNumber(phone)) {
@@ -637,7 +643,8 @@ function Booking({
           ) : (
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
               {SLOTS.map((t) => {
-                const free = isFree(date, t);
+                const free =
+                  isFree(date, t) && !blockedSlots.has(`${date} ${t}`);
                 const selected = t === time;
                 return (
                   <button
@@ -657,7 +664,15 @@ function Booking({
                           : "cursor-not-allowed border-red-200 bg-red-50 text-red-400 line-through")
                     }
                     title={
-                      free ? "" : language === "Engelsk" ? "Booked" : "Optaget"
+                      free
+                        ? ""
+                        : blockedSlots.has(`${date} ${t}`)
+                          ? language === "Engelsk"
+                            ? "Unavailable"
+                            : "Ikke tilgængelig"
+                          : language === "Engelsk"
+                            ? "Booked"
+                            : "Optaget"
                     }
                   >
                     {t}
@@ -728,11 +743,12 @@ function Admin() {
   const [password, setPassword] = useState("");
   const [wrong, setWrong] = useState(false);
   const [bookings, setBookings] = useState<Booking[]>([]);
-  const [blockedDates, setBlockedDates] = useState(new Set<string>());
+  const [blockedSlots, setBlockedSlots] = useState(new Set<string>());
   const [blockedMonth, setBlockedMonth] = useState(
     () => new Date(new Date().getFullYear(), new Date().getMonth(), 1),
   );
   const [dateToChange, setDateToChange] = useState<string | null>(null);
+  const [selectedModalTimes, setSelectedModalTimes] = useState<string[]>([]);
   const [changingDate, setChangingDate] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -745,17 +761,22 @@ function Admin() {
     setBookings((data as Booking[]) ?? []);
   };
 
-  const loadBlockedDates = async () => {
+  const loadBlockedSlots = async () => {
     const { data, error } = await supabase
-      .from("blocked_dates")
-      .select("date")
-      .order("date");
+      .from("blocked_slots")
+      .select("date, time")
+      .order("date")
+      .order("time");
     if (error) {
-      console.error("Could not load blocked dates.", error);
+      console.error("Could not load blocked time slots.", error);
       return;
     }
-    setBlockedDates(
-      new Set((data as BlockedDate[]).map((blockedDate) => blockedDate.date)),
+    setBlockedSlots(
+      new Set(
+        (data as BlockedSlot[]).map(
+          (blockedSlot) => `${blockedSlot.date} ${blockedSlot.time}`,
+        ),
+      ),
     );
   };
 
@@ -770,7 +791,7 @@ function Admin() {
   useEffect(() => {
     if (loggedIn) {
       loadBookings();
-      loadBlockedDates();
+      loadBlockedSlots();
     }
   }, [loggedIn]);
 
@@ -863,37 +884,65 @@ function Admin() {
     else setBookings(bookings.filter((x) => x.id !== b.id));
   };
 
-  const toggleBlockedDate = async (date: string) => {
+  const saveBlockedSlots = async (date: string, selectedTimes: string[]) => {
     setChangingDate(true);
-    if (blockedDates.has(date)) {
-      const { error } = await supabase
-        .from("blocked_dates")
-        .delete()
-        .eq("date", date);
-      if (error) {
-        setChangingDate(false);
-        alert("Kunne ikke åbne datoen igen.");
-        return;
-      }
-      setBlockedDates((current) => {
-        const next = new Set(current);
-        next.delete(date);
-        return next;
-      });
+    const { error: deleteError } = await supabase
+      .from("blocked_slots")
+      .delete()
+      .eq("date", date);
+    if (deleteError) {
       setChangingDate(false);
-      setDateToChange(null);
+      alert("Kunne ikke opdatere klokkeslættene.");
       return;
     }
 
-    const { error } = await supabase.from("blocked_dates").insert({ date });
-    if (error) {
-      setChangingDate(false);
-      alert("Kunne ikke lukke datoen.");
-      return;
+    if (selectedTimes.length) {
+      const { error: insertError } = await supabase
+        .from("blocked_slots")
+        .insert(selectedTimes.map((time) => ({ date, time })));
+      if (insertError) {
+        setChangingDate(false);
+        alert("Kunne ikke opdatere klokkeslættene.");
+        await loadBlockedSlots();
+        return;
+      }
     }
-    setBlockedDates((current) => new Set(current).add(date));
+
+    setBlockedSlots((current) => {
+      const next = new Set(
+        [...current].filter((slot) => !slot.startsWith(`${date} `)),
+      );
+      selectedTimes.forEach((time) => next.add(`${date} ${time}`));
+      return next;
+    });
     setChangingDate(false);
     setDateToChange(null);
+  };
+
+  const openDateModal = (date: string) => {
+    if (changingDate) return;
+    setDateToChange(date);
+    setSelectedModalTimes(
+      SLOTS.filter((time) => blockedSlots.has(`${date} ${time}`)),
+    );
+  };
+
+  const toggleModalTime = (time: string) => {
+    setSelectedModalTimes((current) =>
+      current.includes(time)
+        ? current.filter((selectedTime) => selectedTime !== time)
+        : [...current, time],
+    );
+  };
+
+  const discardDateModalChanges = () => {
+    setDateToChange(null);
+    setSelectedModalTimes([]);
+  };
+
+  const saveDateModal = () => {
+    if (!dateToChange) return;
+    saveBlockedSlots(dateToChange, selectedModalTimes);
   };
 
   const exportCsv = () => {
@@ -1036,22 +1085,33 @@ function Admin() {
                 if (!d) return <div key={i} />;
                 const date = ymd(d);
                 const inRange = d >= minDate && d <= maxDate;
-                const blocked = blockedDates.has(date);
+                const blockedCount = SLOTS.filter((time) =>
+                  blockedSlots.has(`${date} ${time}`),
+                ).length;
+                const blocked = blockedCount === SLOTS.length;
                 return (
                   <button
                     key={i}
                     type="button"
                     disabled={!inRange}
-                    onClick={() => setDateToChange(date)}
+                    onClick={() => openDateModal(date)}
                     className={
                       "aspect-square rounded border text-sm " +
                       (blocked
                         ? "border-red-400 bg-red-200 font-bold text-red-900 hover:bg-red-300"
-                        : inRange
+                        : blockedCount
+                          ? "border-amber-400 bg-amber-100 font-bold text-amber-900 hover:bg-amber-200"
+                          : inRange
                           ? "border-stone-400 bg-white hover:bg-stone-200"
                           : "border-transparent bg-stone-200 text-stone-400")
                     }
-                    title={blocked ? "Åbn dato" : "Luk dato"}
+                    title={
+                      blocked
+                        ? "Rediger lukkede tider"
+                        : blockedCount
+                          ? "Rediger delvist lukkede tider"
+                          : "Vælg tider, der skal lukkes"
+                    }
                   >
                     {d.getDate()}
                   </button>
@@ -1059,8 +1119,8 @@ function Admin() {
               })}
             </div>
             <p className="mt-2 text-xs text-stone-600">
-              Røde datoer er lukket. Datoer kan kun ændres inden for
-              bookingperioden.
+              Røde datoer er helt lukkede, og gule datoer har enkelte lukkede
+              klokkeslæt. Datoer kan kun ændres inden for bookingperioden.
             </p>
           </div>
           <h2 className="mb-3 mt-6 text-lg font-bold">Bookinger pr. dato</h2>
@@ -1164,28 +1224,48 @@ function Admin() {
             className="w-full max-w-md rounded-lg border border-stone-300 bg-white p-6 shadow-xl"
           >
             <h2 id="date-change-title" className="text-xl font-bold">
-              {blockedDates.has(dateToChange)
-                ? "Gør datoen tilgængelig igen?"
-                : "Gør datoen utilgængelig?"}
+              Vælg utilgængelige klokkeslæt
             </h2>
             <p className="mt-3 text-stone-700">
-              {prettyDate(dateToChange)}
-              {blockedDates.has(dateToChange)
-                ? " kan igen vælges af besøgende."
-                : " kan ikke længere vælges af besøgende."}
+              {prettyDate(dateToChange)}. Markér de klokkeslæt, som ikke skal
+              kunne bookes.
             </p>
-            {!blockedDates.has(dateToChange) &&
+            <div className="mt-5 grid grid-cols-3 gap-2 sm:grid-cols-4">
+              {SLOTS.map((time) => {
+                const selected = selectedModalTimes.includes(time);
+                return (
+                  <label
+                    key={time}
+                    className={
+                      "flex cursor-pointer items-center justify-center gap-2 rounded border px-2 py-2 text-sm " +
+                      (selected
+                        ? "border-red-400 bg-red-100 text-red-900"
+                        : "border-stone-400 bg-white hover:bg-stone-100")
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => toggleModalTime(time)}
+                      className="h-4 w-4 accent-red-700"
+                    />
+                    {time}
+                  </label>
+                );
+              })}
+            </div>
+            {selectedModalTimes.length > 0 &&
               (byDate[dateToChange]?.length ?? 0) > 0 && (
                 <p className="mt-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-                  Der er allerede {byDate[dateToChange].length} booking(er) på
-                  denne dato. De bliver ikke slettet.
+                  Eksisterende bookinger bliver ikke slettet, selv hvis deres
+                  klokkeslæt markeres som utilgængelige.
                 </p>
               )}
             <div className="mt-6 flex justify-end gap-2">
               <button
                 type="button"
                 disabled={changingDate}
-                onClick={() => setDateToChange(null)}
+                onClick={discardDateModalChanges}
                 className="rounded border border-stone-400 px-4 py-2 text-sm disabled:opacity-50"
               >
                 Annuller
@@ -1193,14 +1273,10 @@ function Admin() {
               <button
                 type="button"
                 disabled={changingDate}
-                onClick={() => toggleBlockedDate(dateToChange)}
+                onClick={saveDateModal}
                 className="rounded bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
               >
-                {changingDate
-                  ? "Gemmer..."
-                  : blockedDates.has(dateToChange)
-                    ? "Gør tilgængelig"
-                    : "Gør utilgængelig"}
+                {changingDate ? "Gemmer..." : "Gem ændringer"}
               </button>
             </div>
           </div>
